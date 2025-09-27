@@ -1,0 +1,114 @@
+-- Initial Setup: Creates table with PRIMARY KEY index on student_id (Implicit Indexing)
+DROP TABLE IF EXISTS StudentEnrollments;
+
+CREATE TABLE StudentEnrollments (
+    student_id INT PRIMARY KEY,
+    student_name VARCHAR(100) NOT NULL,
+    course_id VARCHAR(10) NOT NULL,
+    enrollment_date DATE NOT NULL
+);
+
+-- Initial Data Insertion
+START TRANSACTION;
+INSERT INTO StudentEnrollments (student_id, student_name, course_id, enrollment_date)
+VALUES 
+    (1, 'Ashish', 'CSE101', '2024-06-01'),
+    (2, 'Smaran', 'CSE102', '2024-06-01'),
+    (3, 'Vaibhav', 'CSE103', '2024-06-01');
+COMMIT;
+
+SELECT 'Initial Data' AS Status, T.* FROM StudentEnrollments T;
+
+-----------------------------------------------------
+
+-- PART A: SIMULATING A DEADLOCK (Reverse Lock Order)
+-- INSTRUCTIONS: Run these steps by switching between two separate database sessions (Session 1 & 2).
+
+-- EXPLAIN: Confirms the Primary Key index is used for efficient row locking.
+EXPLAIN UPDATE StudentEnrollments SET enrollment_date = '2024-07-01' WHERE student_id = 1;
+
+-- --- SESSION 1 (User A) ---
+START TRANSACTION;
+-- 1. Lock Row 1 (Acquire first lock)
+UPDATE StudentEnrollments SET enrollment_date = '2024-07-01' WHERE student_id = 1;
+
+-- *** PAUSE: Switch immediately to Session 2 ***
+
+
+-- --- SESSION 2 (User B) ---
+START TRANSACTION;
+-- 1. Lock Row 2 (Acquire first lock - reverse order)
+UPDATE StudentEnrollments SET enrollment_date = '2024-07-02' WHERE student_id = 2;
+
+-- *** PAUSE: Switch immediately back to Session 1 ***
+
+
+-- --- SESSION 1 (User A) ---
+-- 2. Try to Lock Row 2 (BLOCKED: Waiting for User B)
+UPDATE StudentEnrollments SET enrollment_date = '2024-07-03' WHERE student_id = 2;
+
+-- *** PAUSE: Switch immediately to Session 2 ***
+
+
+-- --- SESSION 2 (User B) ---
+-- 2. Try to Lock Row 1 (DEADLOCK DETECTED: Waiting for User A)
+-- The database will automatically ROLLBACK this session to break the cycle.
+UPDATE StudentEnrollments SET enrollment_date = '2024-07-04' WHERE student_id = 1;
+
+-- --- DEADLOCK RESOLUTION ---
+-- COMMIT the surviving transaction (Session 1).
+COMMIT; 
+
+SELECT 'After Deadlock Resolution' AS Status, T.* FROM StudentEnrollments T;
+
+-----------------------------------------------------
+
+-- PART B: APPLYING MVCC (Non-Blocking Reads)
+-- INSTRUCTIONS: Run these steps by switching between two separate sessions. Use REPEATABLE READ.
+
+-- --- SESSION 1 (User A - Reader) ---
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ; 
+START TRANSACTION;
+
+-- 1. User A reads the original snapshot value (2024-06-01)
+SELECT 'User A first read (Old Value)' AS Status, enrollment_date FROM StudentEnrollments WHERE student_id = 1;
+
+-- *** PAUSE: Switch immediately to Session 2 ***
+
+
+-- --- SESSION 2 (User B - Writer) ---
+START TRANSACTION;
+-- 1. User B updates the record immediately (MVCC allows this without blocking User A)
+UPDATE StudentEnrollments SET enrollment_date = '2024-07-10' WHERE student_id = 1;
+COMMIT;
+SELECT 'User B committed (New Value)' AS Status, enrollment_date FROM StudentEnrollments WHERE student_id = 1;
+
+-- *** PAUSE: Switch immediately back to Session 1 ***
+
+
+-- --- SESSION 1 (User A - Reader) ---
+-- 2. User A reads again. Due to MVCC, it STILL sees the old snapshot value (2024-06-01).
+SELECT 'User A second read (Snapshot)' AS Status, enrollment_date FROM StudentEnrollments WHERE student_id = 1;
+COMMIT; 
+
+SELECT 'Final Check after MVCC' AS Status, T.* FROM StudentEnrollments T;
+
+-----------------------------------------------------
+
+-- PART C: COMPARING LOCKING (Blocking) vs. MVCC (Non-Blocking)
+-- This section re-demonstrates blocking for contrast.
+
+-- EXPLAIN: Shows the efficiency of using the index for the locking operation.
+EXPLAIN SELECT * FROM StudentEnrollments WHERE student_id = 2 FOR UPDATE;
+
+-- Session A (Locker) locks Row 2:
+START TRANSACTION;
+SELECT * FROM StudentEnrollments WHERE student_id = 2 FOR UPDATE;
+
+-- PAUSE: Run the following in Session B: 
+-- UPDATE StudentEnrollments SET enrollment_date = '2024-08-01' WHERE student_id = 2; -- This will BLOCK.
+
+-- Run COMMIT in Session A to release the lock, allowing Session B to proceed.
+COMMIT; 
+
+SELECT 'Locking Scenario Complete' AS Status, T.* FROM StudentEnrollments T;
