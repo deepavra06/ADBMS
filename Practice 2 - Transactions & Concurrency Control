@@ -1,0 +1,107 @@
+-- 1. INITIAL SETUP: Creates table and required unique constraint
+DROP TABLE IF EXISTS StudentEnrollments;
+
+CREATE TABLE StudentEnrollments (
+    enrollment_id INT PRIMARY KEY,
+    student_name VARCHAR(100) NOT NULL,
+    course_id VARCHAR(10) NOT NULL,
+    enrollment_date DATE NOT NULL,
+    CONSTRAINT unique_student_course UNIQUE(student_name, course_id)
+);
+
+-- Initial Data Insertion
+START TRANSACTION;
+
+INSERT INTO StudentEnrollments (enrollment_id, student_name, course_id, enrollment_date)
+VALUES 
+    (1, 'Ashish', 'CSE101', '2024-07-01'),
+    (2, 'Smaran', 'CSE102', '2024-07-01'),
+    (3, 'Vaibhav', 'CSE101', '2024-07-01');
+
+COMMIT;
+
+SELECT 'Initial Data' AS Status, T.* FROM StudentEnrollments T;
+
+-----------------------------------------------------
+
+-- PART A: PREVENT DUPLICATE ENROLLMENTS (Unique Constraint)
+
+-- User A: Successful Enrollment
+START TRANSACTION;
+INSERT INTO StudentEnrollments (enrollment_id, student_name, course_id, enrollment_date)
+VALUES (4, 'Kiran', 'CSE103', '2024-07-02');
+COMMIT;
+
+-- User B: Attempt to insert a duplicate record (EXPECT ERROR)
+START TRANSACTION;
+-- EXPLAIN the INSERT to show how the unique index is utilized
+EXPLAIN INSERT INTO StudentEnrollments (enrollment_id, student_name, course_id, enrollment_date)
+VALUES (5, 'Ashish', 'CSE101', '2024-07-02');
+
+-- This INSERT will fail due to the 'unique_student_course' constraint
+INSERT INTO StudentEnrollments (enrollment_id, student_name, course_id, enrollment_date)
+VALUES (5, 'Ashish', 'CSE101', '2024-07-02');
+
+ROLLBACK;
+
+SELECT 'After Part A attempts' AS Status, T.* FROM StudentEnrollments T;
+
+-----------------------------------------------------
+
+-- PART B & C: ROW-LEVEL LOCKING (SELECT FOR UPDATE)
+-- Run the following commands in two separate sessions to observe blocking.
+
+-- ANALYZE THE QUERY PLAN FOR LOCKING
+-- EXPLAIN shows how the database uses the index to find the row efficiently for locking
+EXPLAIN 
+SELECT * FROM StudentEnrollments
+WHERE student_name = 'Ashish' AND course_id = 'CSE101'
+FOR UPDATE;
+
+-- COMMANDS FOR SESSION 1 (User A)
+-- Run these statements and PAUSE BEFORE the final COMMIT.
+SELECT '--- SESSION 1 START ---' AS SESSION_STATUS;
+
+START TRANSACTION;
+
+-- Acquire exclusive write lock on the Ashish/CSE101 row
+SELECT * FROM StudentEnrollments
+WHERE student_name = 'Ashish' AND course_id = 'CSE101'
+FOR UPDATE;
+
+UPDATE StudentEnrollments
+SET enrollment_date = '2024-07-15'
+WHERE student_name = 'Ashish' AND course_id = 'CSE101';
+
+-- PAUSE HERE: Go to Session 2 and run its commands.
+-- When done, return and run the final COMMIT.
+
+-- SESSION 1 COMMIT: Releases the lock, allowing Session 2 to proceed
+COMMIT; 
+
+SELECT '--- SESSION 1 COMMITTED ---' AS SESSION_STATUS;
+
+-----------------------------------------------------
+
+-- COMMANDS FOR SESSION 2 (User B)
+-- Run this block while Session 1 is paused after its UPDATE.
+
+SELECT '--- SESSION 2 START (Expect Block) ---' AS SESSION_STATUS;
+
+START TRANSACTION;
+
+-- This UPDATE will BLOCK/WAIT because Session 1 holds the lock
+UPDATE StudentEnrollments
+SET enrollment_date = '2024-07-20'
+WHERE student_name = 'Ashish' AND course_id = 'CSE101';
+
+-- This COMMIT will only succeed AFTER Session 1 releases the lock
+COMMIT;
+
+SELECT '--- SESSION 2 COMMITTED (Resume after Session 1) ---' AS SESSION_STATUS;
+
+-----------------------------------------------------
+
+-- FINAL VERIFICATION
+-- Should show Ashish/CSE101 with the final date of '2024-07-20'
+SELECT 'Final State' AS Status, T.* FROM StudentEnrollments T;
